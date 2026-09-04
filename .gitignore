@@ -1,0 +1,31 @@
+# Virtual environment
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Dataset
+data/raw/
+data/processed/
+
+# ML models
+models/*.pth
+models/*.pt
+models/*.onnx
+models/*.tflite
+
+# Experiment tracking
+wandb/
+
+# Environment/secrets
+.env
+*.key
+*.json
+
+# OS
+.DS_Store
+Thumbs.db
