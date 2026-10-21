@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { ArrowRight, Leaf } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -5,10 +6,42 @@ import { useTranslation } from 'react-i18next';
 import { resolveMediaUrl } from '../../services/apiClient';
 import { cropLabel } from '../../utils/format';
 
+const FALLBACK_IMAGE = '/images/diseases/leaf-fallback.jpg';
+
 export default function DiseaseCard({ disease, compact = false }) {
   const { t } = useTranslation();
   const reduce = useReducedMotion();
-  const image = resolveMediaUrl(disease.imageUrl);
+
+  const getInitialSrc = (url) => (url ? resolveMediaUrl(url) : resolveMediaUrl(FALLBACK_IMAGE));
+  const [imgSrc, setImgSrc] = useState(() => getInitialSrc(disease.imageUrl));
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setImgSrc(getInitialSrc(disease.imageUrl));
+    setHasError(false);
+  }, [disease.imageUrl]);
+
+  const handleImageError = () => {
+    // If loading from full backend URL failed, retry relative path served by Vite/frontend
+    if (imgSrc && /^https?:\/\//i.test(imgSrc)) {
+      try {
+        const pathname = new URL(imgSrc, window.location.href).pathname;
+        if (pathname && imgSrc !== pathname) {
+          setImgSrc(pathname);
+          return;
+        }
+      } catch {
+        /* ignore URL parse error */
+      }
+    }
+
+    const fallback = resolveMediaUrl(FALLBACK_IMAGE);
+    if (imgSrc !== fallback && imgSrc !== FALLBACK_IMAGE) {
+      setImgSrc(fallback);
+    } else {
+      setHasError(true);
+    }
+  };
 
   return (
     <motion.article
@@ -18,8 +51,13 @@ export default function DiseaseCard({ disease, compact = false }) {
       transition={{ duration: reduce ? 0 : 0.22 }}
     >
       <div className="disease-card__media">
-        {image ? (
-          <img src={image} alt={t('info.imageAlt', { disease: disease.name })} loading="lazy" />
+        {imgSrc && !hasError ? (
+          <img
+            src={imgSrc}
+            alt={t('info.imageAlt', { disease: disease.name })}
+            loading="lazy"
+            onError={handleImageError}
+          />
         ) : (
           <span className="disease-card__placeholder" aria-hidden="true">
             <Leaf size={30} />

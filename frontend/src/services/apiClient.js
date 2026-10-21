@@ -95,6 +95,9 @@ export const ensureShape = (data, check, what = 'response') => {
 export const resolveMediaUrl = (url) => {
   if (!url) return null;
   if (/^https?:\/\//i.test(url) || url.startsWith('blob:') || url.startsWith('data:')) return url;
+  if (import.meta.env.VITE_UI_PREVIEW === 'true' && url.startsWith('/')) {
+    return url;
+  }
   return `${baseURL}${url.startsWith('/') ? '' : '/'}${url}`;
 };
 

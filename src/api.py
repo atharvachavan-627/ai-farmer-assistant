@@ -143,6 +143,13 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
+# Mount public images directory (disease catalogue photos, fallbacks)
+PUBLIC_IMAGES_DIR = FRONTEND_DIR / "public" / "images"
+DIST_IMAGES_DIR = FRONTEND_DIR / "dist" / "images"
+STATIC_IMAGES_DIR = PUBLIC_IMAGES_DIR if PUBLIC_IMAGES_DIR.exists() else DIST_IMAGES_DIR
+if STATIC_IMAGES_DIR.exists():
+    app.mount("/images", StaticFiles(directory=str(STATIC_IMAGES_DIR)), name="images")
+
 # Configure CORS Middleware
 app.add_middleware(
     CORSMiddleware,

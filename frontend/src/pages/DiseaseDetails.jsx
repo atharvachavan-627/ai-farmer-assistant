@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Eye, FlaskConical, Info, Leaf, ScanLine, Sprout, Stethoscope, Sun, ShieldCheck, Tractor } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -12,6 +13,8 @@ import { useFetch } from '../hooks/useFetch';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { cropLabel } from '../utils/format';
 
+const FALLBACK_IMAGE = '/images/diseases/leaf-fallback.jpg';
+
 export default function DiseaseDetails() {
   const { diseaseCode } = useParams();
   const { t, i18n } = useTranslation();
@@ -21,6 +24,40 @@ export default function DiseaseDetails() {
     [diseaseCode, lang],
   );
   useDocumentTitle(data?.name || t('nav.guide'));
+
+  const [imgSrc, setImgSrc] = useState(null);
+  const [imgFailed, setImgFailed] = useState(false);
+
+  useEffect(() => {
+    if (data?.imageUrl) {
+      setImgSrc(resolveMediaUrl(data.imageUrl));
+      setImgFailed(false);
+    } else if (data) {
+      setImgSrc(resolveMediaUrl(FALLBACK_IMAGE));
+      setImgFailed(false);
+    }
+  }, [data]);
+
+  const handleImageError = () => {
+    if (imgSrc && /^https?:\/\//i.test(imgSrc)) {
+      try {
+        const pathname = new URL(imgSrc, window.location.href).pathname;
+        if (pathname && imgSrc !== pathname) {
+          setImgSrc(pathname);
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const fallback = resolveMediaUrl(FALLBACK_IMAGE);
+    if (imgSrc !== fallback && imgSrc !== FALLBACK_IMAGE) {
+      setImgSrc(fallback);
+    } else {
+      setImgFailed(true);
+    }
+  };
 
   const back = (
     <Link to="/info" className="link-arrow link-arrow--back">
@@ -41,13 +78,13 @@ export default function DiseaseDetails() {
     );
   }
 
-  if (status === 'error') {
-    const notFound = error?.status === 404;
+  if (status === 'error' || !data) {
+    const notFound = error?.status === 404 || !data;
     return (
       <PageTransition className="container page">
         {back}
         <ErrorState
-          error={notFound ? { kind: 'client', message: t('details.notFound') } : error}
+          error={notFound ? { kind: 'client', message: t('details.notFound') || 'Disease information not found.' } : error}
           title={notFound ? undefined : t('details.error')}
           onRetry={notFound ? undefined : reload}
         />
@@ -56,16 +93,15 @@ export default function DiseaseDetails() {
   }
 
   const d = data;
-  const image = resolveMediaUrl(d.imageUrl);
   const showFallback = d.contentLanguage && d.contentLanguage !== lang;
-  const showChemical = d.chemicalVerified && d.chemical.length > 0;
+  const showChemical = d.chemicalVerified && d.chemical?.length > 0;
 
   const sections = [
-    { key: 'symptoms', icon: Eye, items: d.symptoms },
-    { key: 'conditions', icon: Sun, items: d.favourableConditions },
-    { key: 'prevention', icon: ShieldCheck, items: d.preventive },
-    { key: 'cultural', icon: Tractor, items: d.cultural },
-    { key: 'organic', icon: Sprout, items: d.organic },
+    { key: 'symptoms', icon: Eye, items: d.symptoms || [] },
+    { key: 'conditions', icon: Sun, items: d.favourableConditions || [] },
+    { key: 'prevention', icon: ShieldCheck, items: d.preventive || [] },
+    { key: 'cultural', icon: Tractor, items: d.cultural || [] },
+    { key: 'organic', icon: Sprout, items: d.organic || [] },
   ].filter((s) => s.items.length > 0);
 
   return (
@@ -73,7 +109,14 @@ export default function DiseaseDetails() {
       {back}
 
       <header className="detail-head card">
-        {image ? <img src={image} alt={t('info.imageAlt', { disease: d.name })} className="detail-head__img" /> : null}
+        {imgSrc && !imgFailed ? (
+          <img
+            src={imgSrc}
+            alt={t('info.imageAlt', { disease: d.name })}
+            className="detail-head__img"
+            onError={handleImageError}
+          />
+        ) : null}
         <div>
           <p className="eyebrow">
             {t('details.affects')}: {cropLabel(d.crop, t)}

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 import json
 import logging
+import re
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CATALOG_PATH = PROJECT_ROOT / "data" / "disease_catalog.json"
@@ -65,6 +66,15 @@ class DiseaseCatalogService:
             missing = set(class_mapping.keys()) - set(self._catalog.keys())
             if missing:
                 logger.warning(f"Disease catalog is missing model classes: {missing}")
+
+        # Normalized index for flexible lookups (e.g., Potato__Early_blight vs Potato___Early_blight)
+        self._normalized_index: Dict[str, str] = {
+            self._normalize_code(code): code for code in self._catalog.keys()
+        }
+
+    @staticmethod
+    def _normalize_code(code: str) -> str:
+        return re.sub(r'[\s_\-]+', '_', code.strip().lower())
 
     def list_supported_codes(self) -> List[str]:
         """Returns sorted list of all 13 supported disease class codes."""
@@ -133,16 +143,26 @@ class DiseaseCatalogService:
     def get_disease(self, disease_code: str, language: str = "en") -> Optional[Dict[str, Any]]:
         """
         Retrieves a single disease entry by code with requested language.
+        Supports exact code matching and normalized flexible matching (e.g. Potato__Early_blight).
         Returns None if code is unknown.
         """
         if not disease_code or not isinstance(disease_code, str):
             return None
 
         clean_code = disease_code.strip()
-        if clean_code not in self._catalog:
+        base_entry = None
+
+        if clean_code in self._catalog:
+            base_entry = self._catalog[clean_code]
+        else:
+            norm_code = self._normalize_code(clean_code)
+            if norm_code in self._normalized_index:
+                canonical_code = self._normalized_index[norm_code]
+                base_entry = self._catalog[canonical_code]
+
+        if not base_entry:
             return None
 
-        base_entry = self._catalog[clean_code]
         return self._localize_entry(base_entry, language)
 
     def list_diseases(

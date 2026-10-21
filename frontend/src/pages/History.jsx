@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { Activity, ClipboardList, Search, SearchX, TrendingUp, X } from 'lucide-react';
+import { Activity, AlertCircle, CheckCircle2, ClipboardList, Search, SearchX, Trash2, TrendingUp, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import PageTransition from '../components/common/PageTransition';
@@ -29,6 +29,47 @@ export default function History() {
   const [list, setList] = useState({ status: 'loading', items: [], total: 0, page: 1, error: null, loadingMore: false });
   const [reloadKey, setReloadKey] = useState(0);
   const requestId = useRef(0);
+
+  // State for single-record deletion
+  const [recordToDelete, setRecordToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  const [toastMessage, setToastMessage] = useState(null);
+
+  const requestDelete = (record) => {
+    setRecordToDelete(record);
+    setDeleteError(null);
+  };
+
+  const cancelDelete = () => {
+    if (isDeleting) return;
+    setRecordToDelete(null);
+    setDeleteError(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!recordToDelete) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await historyService.delete(recordToDelete.analysisId);
+      // Immediately remove only the selected record without page refresh
+      setList((prev) => ({
+        ...prev,
+        items: prev.items.filter((r) => String(r.analysisId) !== String(recordToDelete.analysisId)),
+        total: Math.max(0, prev.total - 1),
+      }));
+      setRecordToDelete(null);
+      // Update overview statistics
+      setReloadKey((k) => k + 1);
+      setToastMessage(t('history.deleteSuccess') || 'Analysis record deleted successfully.');
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err) {
+      setDeleteError(err.message || t('history.deleteFailed') || 'Failed to delete record. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const query = useMemo(
     () => ({
@@ -105,6 +146,13 @@ export default function History() {
         <h1>{t('history.title')}</h1>
         <p>{t('history.subtitle')}</p>
       </header>
+
+      {toastMessage ? (
+        <div className="alert alert--success" role="status" style={{ marginBottom: 20 }}>
+          <CheckCircle2 size={18} aria-hidden="true" />
+          <p>{toastMessage}</p>
+        </div>
+      ) : null}
 
       {overview.status === 'success' && totalAll > 0 ? (
         <div className="stats">
@@ -239,7 +287,7 @@ export default function History() {
           <div className="grid grid--cards">
             <AnimatePresence>
               {list.items.map((r) => (
-                <HistoryCard key={r.analysisId} record={r} />
+                <HistoryCard key={r.analysisId} record={r} onDelete={requestDelete} />
               ))}
             </AnimatePresence>
           </div>
@@ -253,6 +301,51 @@ export default function History() {
             </div>
           ) : null}
         </>
+      ) : null}
+
+      {recordToDelete ? (
+        <div className="modal-backdrop" onClick={cancelDelete} role="presentation">
+          <div
+            className="modal-dialog card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="delete-dialog-title">
+              {t('history.deleteConfirmTitle') || 'Delete Analysis Record?'}
+            </h3>
+            <p>
+              {t('history.deleteConfirmBody', { disease: recordToDelete.disease }) ||
+                `Are you sure you want to delete this analysis record for "${recordToDelete.disease}"? This action cannot be undone.`}
+            </p>
+            {deleteError ? (
+              <div className="alert alert--error" role="alert" style={{ marginBottom: 16 }}>
+                <AlertCircle size={18} aria-hidden="true" />
+                <p>{deleteError}</p>
+              </div>
+            ) : null}
+            <div className="modal-dialog__actions">
+              <button
+                type="button"
+                className="btn btn--secondary"
+                onClick={cancelDelete}
+                disabled={isDeleting}
+              >
+                {t('common.cancel') || 'Cancel'}
+              </button>
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={confirmDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? <Spinner size={16} /> : <Trash2 size={16} aria-hidden="true" />}
+                {isDeleting ? (t('common.deleting') || 'Deleting…') : (t('common.delete') || 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </PageTransition>
   );

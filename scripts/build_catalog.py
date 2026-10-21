@@ -260,7 +260,7 @@ for code, idx in sorted(class_mapping.items(), key=lambda x: x[1]):
         "crop": kb_entry["crop"],
         "category": meta["category"],
         "created_at": meta["created_at"],
-        "image_url": None,
+        "image_url": f"/images/diseases/{code.replace(' ', '_')}.jpg",
         "symptoms_summary": meta["symptoms_summary"],
         "prevention_summary": meta["prevention_summary"],
         "overview": meta["overview"],

@@ -234,6 +234,31 @@ class TestDiseaseCatalog(unittest.TestCase):
             "Must reference verified agronomic active ingredients."
         )
 
+    def test_13_disease_cards_have_valid_images_and_static_serving(self):
+        """Every one of the 13 disease cards must have a valid PlantVillage image URL and be served via /images."""
+        resp = self.client.get("/diseases")
+        self.assertEqual(resp.status_code, 200)
+        items = resp.json()["items"]
+        self.assertEqual(len(items), 13)
+
+        for item in items:
+            code = item["disease_code"]
+            image_url = item.get("image_url")
+            self.assertIsNotNone(image_url, f"Disease {code} must have an image_url")
+            self.assertTrue(image_url.startswith("/images/diseases/"), f"image_url for {code} must start with /images/diseases/")
+            self.assertTrue(image_url.endswith(".jpg"), f"image_url for {code} must end with .jpg")
+
+            # Verify image file is actually served with HTTP 200 and image/jpeg
+            img_resp = self.client.get(image_url)
+            self.assertEqual(img_resp.status_code, 200, f"Static image for {code} returned {img_resp.status_code}")
+            self.assertIn("image/jpeg", img_resp.headers.get("content-type", ""))
+            self.assertGreater(len(img_resp.content), 5000, f"Image file for {code} should be valid image bytes")
+
+        # Also verify fallback image is served
+        fallback_resp = self.client.get("/images/diseases/leaf-fallback.jpg")
+        self.assertEqual(fallback_resp.status_code, 200)
+        self.assertIn("image/jpeg", fallback_resp.headers.get("content-type", ""))
+
 
 if __name__ == "__main__":
     unittest.main()

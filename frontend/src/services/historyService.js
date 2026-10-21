@@ -34,4 +34,11 @@ export const historyService = {
       })),
     };
   },
+  /**
+   * DELETE /history/{analysis_id}
+   */
+  async delete(analysisId) {
+    const { data } = await apiClient.delete(`/history/${encodeURIComponent(analysisId)}`);
+    return data;
+  },
 };
