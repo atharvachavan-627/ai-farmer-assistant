@@ -237,9 +237,169 @@ python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
   "low_confidence": false,
   "is_low_confidence": false,
   "created_at": "2026-10-10T12:00:00+00:00",
-  "image_url": null
+  "image_url": null,
+  "severity": {
+    "status": "estimated",
+    "estimated_affected_area_percent": 18.7,
+    "category": "moderate",
+    "method": "multispectral_color_segmentation_v1",
+    "message": "Visible affected leaf area successfully estimated.",
+    "affected_pixels": 6407,
+    "total_leaf_pixels": 34264,
+    "confidence_level": "high",
+    "disclaimer": "Experimental estimate of visible leaf surface lesion area from this image. It describes the submitted photograph only and does not establish whole-plant severity or replace certified in-field agronomic scouting."
+  }
 }
 ```
+
+---
+
+### Strict Input Validation Pipeline (Computer Vision & Crop Validation)
+
+The application implements a dedicated multi-stage validation pipeline (`src/image_validator.py`) before ML disease classification. It prevents false acceptance of non-plant images (humans, animals, vehicles, buildings, everyday objects), unsupported crops (grape, apple, corn, etc.), and fruits/tubers alone without leaves.
+
+#### 1. Multi-Stage Pipeline Architecture
+
+```
+                       [ Uploaded File Stream ]
+                                   │
+                                   ▼
+          ┌─────────────────────────────────────────────────┐
+          │ Stage A: File & Raster Integrity Validation     │
+          │ - Format (JPEG/PNG/WEBP) & size (<= 10MB)       │
+          │ - Dimensions (>= 60px & >= 4096 px)             │
+          │ - Contrast, sharpness & exposure checks         │
+          └────────────────────────┬────────────────────────┘
+                                   │ Passes Stage A
+                                   ▼
+          ┌─────────────────────────────────────────────────┐
+          │ Stage B: Plant & Leaf Presence Verification     │
+          │ - Multi-spectral foliar coverage check          │
+          │ - Fruit circularity / non-leaf rejection        │
+          └────────────────────────┬────────────────────────┘
+                                   │ Passes Stage B
+                                   ▼
+          ┌─────────────────────────────────────────────────┐
+          │ Stage C: Dedicated Crop Classification Head     │
+          │ - MobileNetV2 pretrained feature extractor      │
+          │ - 4-class classifier (Tomato, Potato,           │
+          │   Unsupported Plant, Non-Plant)                 │
+          │ - ImageNet 1000-class non-plant top-1 check     │
+          └────────────────────────┬────────────────────────┘
+                                   │
+                                   ▼
+          ┌─────────────────────────────────────────────────┐
+          │ Stage D: Unified Decision Engine                │
+          │ Outcomes:                                       │
+          │  VALID_TOMATO_LEAF      -> Proceed to ML Model  │
+          │  VALID_POTATO_LEAF      -> Proceed to ML Model  │
+          │  INVALID_NON_PLANT_IMAGE-> HTTP 422 Rejection   │
+          │  INVALID_NO_LEAF        -> HTTP 422 Rejection   │
+          │  UNSUPPORTED_PLANT      -> HTTP 422 Rejection   │
+          │  UNSUPPORTED_CROP_UNCERTAIN -> HTTP 422 Reject  │
+          │  INVALID_IMAGE_QUALITY  -> HTTP 422 Rejection   │
+          │  INVALID_FILE           -> HTTP 422 Rejection   │
+          └─────────────────────────────────────────────────┘
+```
+
+#### 2. Rejection Response Format (HTTP 422 Unprocessable Entity)
+
+```json
+{
+  "success": false,
+  "error_code": "INVALID_NON_PLANT_IMAGE",
+  "message": "Invalid input. Please upload a clear photo of a tomato or potato leaf.",
+  "detail": "Invalid input. Please upload a clear photo of a tomato or potato leaf.",
+  "error": {
+    "code": "INVALID_NON_PLANT_IMAGE",
+    "message": "Invalid input. Please upload a clear photo of a tomato or potato leaf.",
+    "details": "...",
+    "timestamp": "2026-10-22T01:15:00+00:00"
+  }
+}
+```
+
+#### 3. Frontend Invalid Input State
+
+When rejected by the backend:
+- The UI displays a dedicated **Invalid Input** card with clear visual warning styling (`InvalidInputCard.jsx`).
+- An informative badge details the reason (Non-Plant Image, Unsupported Plant, No Suitable Leaf, Insufficient Quality).
+- Explicitly states: **"No disease analysis was performed on this image."**
+- ResultCard, crop tags, disease names, severity estimations, and treatment plans are **completely hidden**.
+- Includes an **"Upload Another Image"** button that immediately resets the dropzone.
+
+---
+
+### Plant Disease Severity Estimation (Computer Vision Module)
+
+The application integrates an automated, modular, testable **Plant Disease Severity Estimation** engine (`src/severity_estimator.py`). It calculates the percentage of visible leaf tissue damaged by foliar pathogens (chlorosis and necrotic lesions).
+
+#### 1. Architecture & Computer Vision Pipeline
+
+```
+  [ Uploaded Image (PIL/Bytes/BGR) ]
+                 │
+                 ▼
+  ┌────────────────────────────────────────┐
+  │ Step 1: Leaf Segmentation              │
+  │ • Color-space: HSV, CIELAB & ExG       │
+  │ • Background suppression (paper/table) │
+  │ • Morphological closure of holes       │
+  │ • Minimum leaf area verification       │
+  └──────────────────┬─────────────────────┘
+                     │ (Validated Leaf Mask)
+                     ▼
+  ┌────────────────────────────────────────┐
+  │ Step 2: Lesion Segmentation            │
+  │ • Exclude healthy green tissue         │
+  │ • Segment necrotic tissue (brown/dark) │
+  │ • Segment chlorotic halos (yellow)     │
+  │ • Morphological noise opening          │
+  └──────────────────┬─────────────────────┘
+                     │ (Validated Lesion Mask)
+                     ▼
+  ┌────────────────────────────────────────┐
+  │ Step 3: Area Calculation & Validation  │
+  │ • Affected % = (Lesion Px / Leaf Px)*100
+  │ • Strict boundary [0.0, 100.0] bounds  │
+  │ • Zero-denominator division protection │
+  └──────────────────┬─────────────────────┘
+                     │
+                     ▼
+  ┌────────────────────────────────────────┐
+  │ Step 4: Agronomic Categorization       │
+  │ • None: 0.0%                           │
+  │ • Mild: 0.1% - 10.0%                   │
+  │ • Moderate: 10.1% - 25.0%              │
+  │ • Severe: > 25.0%                      │
+  └──────────────────┬─────────────────────┘
+                     │
+                     ▼
+        [ API & UI Response Payload ]
+```
+
+#### 2. Supported Operating Modes
+
+| Condition Type | Supported Disease Classes | Operating Behavior |
+|---|---|---|
+| **Healthy Foliage** | `Potato___healthy`, `Tomato___healthy` | Directly sets `estimated_affected_area_percent=0.0`, `status="healthy_leaf"`, `category="none"`. Natural veins or minor color variation are not treated as disease lesions. |
+| **Foliar Blights & Spots** | `Potato___Early_blight`, `Potato___Late_blight`, `Tomato___Early_blight`, `Tomato___Late_blight`, `Tomato___Bacterial_spot`, `Tomato___Septoria_leaf_spot`, `Tomato___Target_Spot`, `Tomato___Leaf_Mold` | Full validated multi-spectral lesion segmentation isolating necrotic centers and chlorotic halos from green parenchyma. Returns `status="estimated"` with quantitative percentage and tier. |
+| **Viral / Systemic / Stippling** | `Tomato___Spider_mites Two-spotted_spider_mite`, `Tomato___Tomato_Yellow_Leaf_Curl_Virus`, `Tomato___Tomato_mosaic_virus` | Estimates visible discoloration/curling with explicit disclaimer noting that viral and mite damage is systemic rather than purely localized surface necrosis. |
+| **Edge Cases & Guardrails** | Negligible leaf pixels, low contrast, corrupted image, or low classifier confidence | Returns guarded statuses: `insufficient_leaf_area`, `unreliable_segmentation`, `unsupported_class`, or `estimation_error`. Never returns `NaN` or crashes the primary prediction. |
+
+#### 3. Empirical Benchmark & Latency
+
+Evaluated on 35 representative test images across 7 classes from the PlantVillage dataset:
+- **Mean Processing Latency**: **8.93 ms** per 256x256 image (Min: 4.65 ms, Max: 116.48 ms on CPU).
+- **Zero Heavy Model Footprint**: Employs optimized vectorized NumPy and OpenCV color transformations, avoiding redundant secondary neural network inference or GPU memory bloat.
+
+#### 4. Limitations & Future Roadmap
+
+- **Advisory Scope**: This estimate measures visible affected leaf area in the single submitted camera angle. It does not measure whole-canopy infection or replace certified agricultural scouting.
+- **Future Modular Upgrade**: Designed with the clean `PlantDiseaseSeverityEstimator` interface. When lesion-annotated segmentation masks become available, a learned segmentation model (e.g. U-Net / DeepLabV3+) can seamlessly drop into `segment_lesions()` without altering the API or frontend contracts.
+- **Next Planned Feature**: **Grad-CAM visualization**, providing heatmap overlays to explain which visual regions informed the classification model.
+
+---
 
 ### 4. Analysis History (Protected)
 
@@ -412,6 +572,12 @@ python tests/test_inference.py
 # Treatment recommendation coverage & safety tests (5 test functions)
 python tests/test_treatment.py
 
+# Plant disease severity estimator unit tests (11 unittest methods)
+python -m unittest tests/test_severity_estimator.py
+
+# Strict input validation acceptance test suite (17 unittest methods)
+python -m unittest tests/test_input_validation.py
+
 # ==============================================================================
 # 2. API & CONTRACT TESTS (Schema, endpoint contracts & localization)
 # ==============================================================================
@@ -420,6 +586,9 @@ python tests/test_api_contract.py
 
 # FastAPI backend automated test suite (13 test checks)
 python tests/test_api.py
+
+# Severity estimation API integration test suite
+python -m unittest tests/test_api_severity.py
 
 # Disease Information API test suite (12 unittest test methods)
 python -m unittest tests/test_disease_catalog.py

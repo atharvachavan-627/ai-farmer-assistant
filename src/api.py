@@ -40,9 +40,12 @@ from src.auth import (
 from src.inference import DiseaseClassifier, get_classifier
 from src.treatment import TreatmentAdvisor, get_advisor
 from src.disease_catalog import DiseaseCatalogService, get_catalog_service
+from src.severity_estimator import estimate_disease_severity, SEVERITY_DISCLAIMER
+from src.image_validator import validate_leaf_image, ValidationResult
 from src.schemas import (
     HealthResponse,
     PredictionResponse,
+    SeverityDetails,
     TreatmentDetails,
     ErrorResponse,
     ErrorDetails,
@@ -155,7 +158,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
     allow_headers=["*"],
     expose_headers=["Content-Length", "X-Process-Time"]
 )
@@ -186,6 +189,7 @@ async def api_error_handler(request: Request, exc: APIError):
     logger.warning(f"APIError [{exc.code}] {exc.status_code}: {exc.message}")
     payload = ErrorResponse(
         success=False,
+        error_code=exc.code,
         message=exc.message,
         detail=exc.message,
         error=ErrorDetails(
@@ -211,6 +215,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
     payload = ErrorResponse(
         success=False,
+        error_code=code,
         message=msg,
         detail=msg,
         error=ErrorDetails(
@@ -588,7 +593,28 @@ async def predict_crop_disease(
             details=f"Dimensions: {pil_img.size}"
         )
 
-    # 9. Verify model availability & execute ML Inference
+    # 9. Strict Multi-Stage Input Validation Pipeline
+    # Evaluates file/raster integrity, leaf presence, and identifies crop as tomato or potato
+    validation_res = validate_leaf_image(
+        file_bytes=contents,
+        filename=upload_file.filename,
+        pil_image=pil_img
+    )
+    if not validation_res.is_valid:
+        logger.warning(
+            f"Image rejected by validation pipeline: decision={validation_res.decision}, "
+            f"error_code={validation_res.error_code}, reason={validation_res.message}"
+        )
+        raise APIError(
+            status_code=validation_res.http_status,
+            code=validation_res.error_code or "VALIDATION_FAILED",
+            message=validation_res.message,
+            details=str(validation_res.details) if validation_res.details else None
+        )
+
+    verified_crop = validation_res.crop
+
+    # 10. Verify model availability & execute ML Inference
     try:
         classifier = get_classifier()
         if classifier is None or getattr(classifier, "model", None) is None:
@@ -617,17 +643,17 @@ async def predict_crop_disease(
     raw_disease = inference_result["disease"]
     model_version = inference_result["model_version"]
 
-    # 10. Query Authoritative Treatment Knowledge Base
+    # 11. Query Authoritative Treatment Knowledge Base
     advisor = get_advisor()
     treatment_raw = advisor.get_treatment(raw_disease)
 
-    # 11. Low-Confidence Evaluation (< threshold)
+    # 12. Low-Confidence Evaluation (< threshold)
     active_threshold = confidence_threshold if confidence_threshold is not None else settings.CONFIDENCE_THRESHOLD
     is_low_confidence = confidence < active_threshold
 
     if is_low_confidence:
         display_disease = "Low Confidence / Unverified"
-        display_crop = treatment_raw.get("crop", "Tomato")
+        display_crop = verified_crop or treatment_raw.get("crop", "Tomato")
         treatment_payload = TreatmentDetails(
             status="low_confidence",
             disease_key=raw_disease,
@@ -658,7 +684,7 @@ async def predict_crop_disease(
         )
     else:
         display_disease = treatment_raw["disease_name"]
-        display_crop = treatment_raw["crop"]
+        display_crop = verified_crop or treatment_raw["crop"]
         treatment_payload = TreatmentDetails(**treatment_raw)
 
     # 12. Persist analysis record to database for authenticated user
@@ -688,6 +714,29 @@ async def predict_crop_disease(
 
     created_iso = analysis_record.created_at.isoformat() if hasattr(analysis_record.created_at, "isoformat") else get_current_timestamp()
 
+    # 13. Plant Disease Severity Estimation (Foliar lesion surface area)
+    if is_low_confidence:
+        severity_payload = SeverityDetails(
+            status="unreliable_segmentation",
+            category="unavailable",
+            method="multispectral_color_segmentation_v1",
+            message="Disease classification confidence is below the diagnostic threshold; severity estimation withheld for safety.",
+            disclaimer=SEVERITY_DISCLAIMER
+        )
+    else:
+        try:
+            severity_dict = estimate_disease_severity(pil_img, raw_disease, confidence=confidence)
+            severity_payload = SeverityDetails(**severity_dict)
+        except Exception as e:
+            logger.warning(f"Severity estimation failed gracefully: {e}")
+            severity_payload = SeverityDetails(
+                status="estimation_error",
+                category="unavailable",
+                method="multispectral_color_segmentation_v1",
+                message=f"Severity estimation encountered an error: {str(e)}",
+                disclaimer=SEVERITY_DISCLAIMER
+            )
+
     return PredictionResponse(
         success=True,
         analysis_id=str(analysis_record.id),
@@ -700,7 +749,8 @@ async def predict_crop_disease(
         low_confidence=is_low_confidence,
         is_low_confidence=is_low_confidence,
         created_at=created_iso,
-        image_url=None
+        image_url=None,
+        severity=severity_payload
     )
 
 

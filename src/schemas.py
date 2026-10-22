@@ -36,6 +36,19 @@ class TreatmentDetails(BaseModel):
     source: str = Field("", description="Authoritative agricultural extension source")
 
 
+class SeverityDetails(BaseModel):
+    """Plant leaf disease severity estimation details."""
+    status: str = Field(..., description="Estimation status: 'estimated', 'healthy_leaf', 'insufficient_leaf_area', 'unreliable_segmentation', 'unsupported_class', 'estimation_error'", example="estimated")
+    estimated_affected_area_percent: Optional[float] = Field(None, description="Percentage of visible leaf area affected by disease [0, 100]", example=15.0)
+    category: Optional[str] = Field(None, description="Agronomic severity tier ('none', 'mild', 'moderate', 'severe', 'unavailable')", example="moderate")
+    method: Optional[str] = Field(None, description="Severity estimation algorithm identifier", example="multispectral_color_segmentation_v1")
+    message: Optional[str] = Field(None, description="Diagnostic message or explanatory guidance")
+    affected_pixels: Optional[int] = Field(None, description="Count of affected leaf pixels")
+    total_leaf_pixels: Optional[int] = Field(None, description="Total count of visible leaf pixels")
+    confidence_level: Optional[str] = Field(None, description="Assessment reliability indicator ('high', 'medium', 'moderate')")
+    disclaimer: Optional[str] = Field(None, description="Advisory limitation disclaimer")
+
+
 class PredictionResponse(BaseModel):
     """Successful disease prediction and recommendation response."""
     success: bool = Field(True, description="Request success status", example=True)
@@ -50,6 +63,7 @@ class PredictionResponse(BaseModel):
     is_low_confidence: bool = Field(False, description="Flag indicating confidence below threshold (backward compatible)", example=False)
     created_at: Optional[str] = Field(None, description="ISO timestamp", example="2026-10-09T00:20:00Z")
     image_url: Optional[str] = Field(None, description="Image URL if stored", example=None)
+    severity: Optional[SeverityDetails] = Field(None, description="Plant disease severity estimation details")
 
 
 class ErrorDetails(BaseModel):
@@ -63,6 +77,7 @@ class ErrorDetails(BaseModel):
 class ErrorResponse(BaseModel):
     """Unified error response schema."""
     success: bool = Field(False, description="Request success status", example=False)
+    error_code: Optional[str] = Field(None, description="Machine-readable error code", example="INVALID_NON_PLANT_IMAGE")
     message: Optional[str] = Field(None, description="Human-readable error message for frontend clients", example="No image file was provided in the request.")
     detail: Optional[str] = Field(None, description="Standard FastAPI detail for frontend clients", example="No image file was provided in the request.")
     error: ErrorDetails = Field(..., description="Error details payload")

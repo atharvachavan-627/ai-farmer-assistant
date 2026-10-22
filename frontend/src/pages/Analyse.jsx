@@ -7,6 +7,7 @@ import Spinner from '../components/common/Spinner';
 import UploadDropzone from '../components/analysis/UploadDropzone';
 import AnalysingState from '../components/analysis/AnalysingState';
 import ResultCard from '../components/analysis/ResultCard';
+import InvalidInputCard from '../components/analysis/InvalidInputCard';
 import { analysisService } from '../services/analysisService';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { ACCEPTED_IMAGE_TYPES, MAX_IMAGE_MB } from '../utils/constants';
@@ -18,9 +19,10 @@ export default function Analyse() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [fileError, setFileError] = useState(null);
-  const [status, setStatus] = useState('idle'); // idle | loading | success | error
+  const [status, setStatus] = useState('idle'); // idle | loading | success | error | invalid_input
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [invalidError, setInvalidError] = useState(null);
   const [analysedAt, setAnalysedAt] = useState(null);
   const abortRef = useRef(null);
 
@@ -35,12 +37,15 @@ export default function Analyse() {
     setFileError(null);
     setResult(null);
     setError(null);
+    setInvalidError(null);
     setStatus('idle');
   }, []);
 
   const onSelect = (selected) => {
+    // Clear all previous results and errors immediately
     setResult(null);
     setError(null);
+    setInvalidError(null);
     setStatus('idle');
     if (!ACCEPTED_IMAGE_TYPES.includes(selected.type)) {
       setFileError(t('analyse.errors.type'));
@@ -64,8 +69,13 @@ export default function Analyse() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    setStatus('loading');
+
+    // Reset previous states on new submission
+    setResult(null);
     setError(null);
+    setInvalidError(null);
+    setStatus('loading');
+
     try {
       const data = await analysisService.predict(file, { signal: controller.signal, lang: i18n.resolvedLanguage });
       setResult(data);
@@ -73,8 +83,34 @@ export default function Analyse() {
       setStatus('success');
     } catch (err) {
       if (err?.code === 'ERR_CANCELED' || controller.signal.aborted) return;
-      setError(err);
-      setStatus('error');
+      const details = err.details || {};
+      const errorCode = details.error_code || details.error?.code || details.code;
+      const isValidationError =
+        err.status === 422 ||
+        err.status === 415 ||
+        [
+          'INVALID_NON_PLANT_IMAGE',
+          'UNSUPPORTED_PLANT',
+          'UNSUPPORTED_CROP_UNCERTAIN',
+          'INVALID_NO_LEAF',
+          'INVALID_IMAGE_QUALITY',
+          'INVALID_FILE',
+          'CORRUPTED_IMAGE',
+          'INVALID_IMAGE_DIMENSIONS',
+          'UNSUPPORTED_MEDIA_TYPE',
+        ].includes(errorCode);
+
+      if (isValidationError) {
+        setInvalidError({
+          errorCode: errorCode || 'INVALID_INPUT',
+          message: details.message || err.message,
+          details,
+        });
+        setStatus('invalid_input');
+      } else {
+        setError(err);
+        setStatus('error');
+      }
     }
   };
 
@@ -89,6 +125,8 @@ export default function Analyse() {
 
       {status === 'success' && result ? (
         <ResultCard result={result} imageUrl={previewUrl} analysedAt={analysedAt} onReset={reset} />
+      ) : status === 'invalid_input' ? (
+        <InvalidInputCard errorInfo={invalidError} imageUrl={previewUrl} onReset={reset} />
       ) : (
         <div className="analyse">
           <div className="analyse__main">

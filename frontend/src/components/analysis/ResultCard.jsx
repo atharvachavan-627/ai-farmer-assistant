@@ -3,6 +3,7 @@ import { AlertTriangle, BookOpen, FlaskConical, History, Leaf, ScanLine, ShieldC
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import ConfidenceBar from './ConfidenceBar';
+import SeverityCard from './SeverityCard';
 import BulletList from '../common/BulletList';
 import SectionCard from '../common/SectionCard';
 import { cropLabel, formatDateTime, LOW_CONFIDENCE_THRESHOLD } from '../../utils/format';
@@ -79,6 +80,8 @@ export default function ResultCard({ result, imageUrl, analysedAt, onReset }) {
           </div>
         </div>
       </div>
+
+      <SeverityCard severity={result.severity} />
 
       {hasTreatment ? (
         <div className="result__grid">

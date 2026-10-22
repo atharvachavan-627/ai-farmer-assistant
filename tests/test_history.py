@@ -24,6 +24,7 @@ import io
 import uuid
 from pathlib import Path
 from PIL import Image
+import numpy as np
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
@@ -40,9 +41,15 @@ from src.schemas import HistoryListResponse, HistoryItem, HistoryDeleteResponse
 
 
 def create_test_image_bytes() -> bytes:
-    """Creates a minimal valid RGB JPEG leaf image."""
+    """Creates or loads a valid RGB JPEG leaf image."""
+    pv_sample = PROJECT_ROOT / "data" / "raw" / "plantvillage" / "plantvillage dataset" / "color" / "Tomato___Early_blight"
+    leaf_file = next(pv_sample.glob("*.JPG"), None) if pv_sample.exists() else None
+    if leaf_file:
+        with open(leaf_file, "rb") as f:
+            return f.read()
     buf = io.BytesIO()
-    Image.new("RGB", (224, 224), color=(34, 139, 34)).save(buf, format="JPEG")
+    np_arr = np.random.randint(50, 200, (224, 224, 3), dtype=np.uint8)
+    Image.fromarray(np_arr).save(buf, format="JPEG")
     return buf.getvalue()
 
 

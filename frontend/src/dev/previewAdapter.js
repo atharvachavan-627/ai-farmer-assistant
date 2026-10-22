@@ -638,8 +638,40 @@ const handler = async (config) => {
 
   // ---- predict (SAMPLE OUTPUT - not a model result) ----
   if (url === '/predict' && method === 'post') {
-    await sleep(1200);
+    await sleep(800);
     const file = config.data?.get?.('image');
+    const filename = (file?.name || '').toLowerCase();
+
+    // Check for simulated invalid inputs
+    if (/person|human|selfie|animal|dog|cat|car|vehicle|building|chair|furniture|document/.test(filename)) {
+      return respond(config, 422, {
+        success: false,
+        error_code: 'INVALID_NON_PLANT_IMAGE',
+        message: 'Invalid input. Please upload a clear photo of a tomato or potato leaf.',
+      });
+    }
+    if (/grape|corn|apple|peach|orange|cherry|strawberry|soybean|squash|unsupported/.test(filename)) {
+      return respond(config, 422, {
+        success: false,
+        error_code: 'UNSUPPORTED_PLANT',
+        message: 'This plant is not supported. Disease analysis is currently available only for tomato and potato leaves.',
+      });
+    }
+    if (/fruit|tomato_fruit|potato_tuber|noleaf|flower|grass/.test(filename)) {
+      return respond(config, 422, {
+        success: false,
+        error_code: 'INVALID_NO_LEAF',
+        message: 'No suitable leaf was detected. Please upload a clear photo of a tomato or potato leaf.',
+      });
+    }
+    if (/blur|dark|overexposed|blank/.test(filename)) {
+      return respond(config, 422, {
+        success: false,
+        error_code: 'INVALID_IMAGE_QUALITY',
+        message: 'Image quality is insufficient for analysis (too blurry, overexposed, or low contrast). Please upload a sharp, well-lit photo.',
+      });
+    }
+
     const seed = file?.size || 1;
     const d = DISEASES[seed % DISEASES.length];
     const confidence = Math.round((0.55 + (seed % 43) / 100) * 100) / 100; // 0.55 - 0.97, sometimes low
@@ -662,6 +694,23 @@ const handler = async (config) => {
         organic_treatment: d.organic_management,
         chemical_treatment: [],
       },
+      severity: d.disease_code.includes('healthy')
+        ? {
+            status: 'healthy_leaf',
+            estimated_affected_area_percent: 0.0,
+            category: 'none',
+            method: 'multispectral_color_segmentation_v1',
+            message: 'Plant tissue classified as healthy; no disease lesions detected.',
+            disclaimer: 'Experimental estimate of visible leaf surface lesion area from this image.',
+          }
+        : {
+            status: 'estimated',
+            estimated_affected_area_percent: 14.5,
+            category: 'moderate',
+            method: 'multispectral_color_segmentation_v1',
+            message: 'Visible affected leaf area estimated in sample preview.',
+            disclaimer: 'Experimental estimate of visible leaf surface lesion area from this image.',
+          },
       model_version: 'ui-preview (sample output, not a real prediction)',
     });
   }
